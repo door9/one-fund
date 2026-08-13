@@ -29,6 +29,11 @@ export function defaultState() {
     // 그 추정이 유령 유출을 만든 적이 있다. 이제 자본이 오간 판단은 이 기록만 한다.
     // [{id, date, kind:'in'|'out', cur:'KRW'|'USD', amount, note}]
     cashMoves: [],
+    // 배당·이자 등 매매가 아닌 수입. 자본이 아니라 **수익**이므로 원금(넣은 돈)에 넣지 않는다.
+    // 계좌에 현금으로 들어오므로 장부의 현금은 늘려 준다 — 이게 없으면 그 돈으로 산 주식이
+    // '밖에서 새로 들어온 돈'으로 잘못 잡혀 원금이 부풀었다.
+    // [{id, date, cur:'KRW'|'USD', amount, kind:'배당'|'이자'|'기타', symbol, name, note}]
+    incomes: [],
     archives: [],    // 청산한 펀드 세대 (2ⁿ) — 아래 closeFund 참고
     // 가상 펀드: 실제로 사지 않은 종목을 "그때 샀다면" 굴려 보는 장부. 여러 개 만들 수 있다.
     // [{id, name, note, positions:[{id, symbol, name, date, price, qty}], createdAt, updatedAt}]
@@ -45,7 +50,7 @@ export function defaultState() {
 //
 // 청산 시 보관하고 비우는 기록. 글귀 서랍(quotes)은 펀드가 아니라 책에서 온 것이라 남긴다.
 // 설정(저장소·PIN·예금 가정 금리)도 앱 설정이지 펀드 기록이 아니므로 남는다.
-export const FUND_COLLS = ['trades', 'diary', 'principles', 'letters', 'watchlist', 'swaps', 'loans', 'exchanges', 'cashMoves'];
+export const FUND_COLLS = ['trades', 'diary', 'principles', 'letters', 'watchlist', 'swaps', 'loans', 'exchanges', 'cashMoves', 'incomes'];
 
 // 지금 펀드를 청산해 archives에 넣고 장부를 비운다.
 // summary는 engine.fundSummary가 청산 시점에 계산한 성적표 — 열람할 때 다시 계산하지 않는다.

@@ -158,6 +158,7 @@ export function capitalLedger(state, upto = null) {
   const entries = cashLog(state).filter(e => !upto || e.date <= upto);
   const fxs = exchangeLog(state).filter(x => !upto || x.date <= upto);
   const moves = cashMoveLog(state).filter(m => !upto || m.date <= upto);
+  const incs = incomeLog(state).filter(r => !upto || r.date <= upto);
 
   const push = (date, cur, amt, src) => {
     if (Math.abs(amt) > 1e-9) events.push({ date, cur, amt, amtKRW: P.toKRW(amt, cur, date) || 0, src });
@@ -211,6 +212,14 @@ export function capitalLedger(state, upto = null) {
   // 자본이 오갔다는 판단은 사용자가 남긴 입출금 기록(cashMoves)만 한다.
   const applyCashEntry = (e) => {
     for (const cur of ['KRW', 'USD']) pool[cur] = e[cur] || 0;
+  };
+
+  // 배당·이자는 **자본이 아니라 수익**이다. 장부의 현금만 늘리고 netCap·flow에는 손대지 않는다.
+  // 그래야 원금(넣은 돈)이 부풀지 않으면서, 그 돈으로 산 주식이 '밖에서 들어온 돈'으로
+  // 잘못 잡히지도 않는다. 수익률에는 평가액을 통해 저절로 반영된다.
+  const applyIncome = (r) => {
+    const cur = r.cur === 'USD' ? 'USD' : 'KRW';
+    pool[cur] += Math.max(0, Number(r.amount) || 0);
   };
 
   // 사용자가 확정한 입출금. 이것만이 현금 쪽 자본 이동의 근거다.
@@ -279,9 +288,10 @@ export function capitalLedger(state, upto = null) {
   // "그날 판 돈으로 환전해서 샀다"는 실제 순서가 재현된다. 매도를 환전 뒤에 두었더니
   // 2026-05-12에 원화를 판 돈이 아직 없다고 보고 162만원을 '밖에서 새로 들어온 돈'으로
   // 세었다. 현금 입력이 맨 마지막인 이유는 그것이 '하루가 끝난 뒤의 잔액'이기 때문이다.
-  const ORD = { in: 0, sell: 1, fx: 2, buy: 3, out: 4, entry: 5 };
+  const ORD = { in: 0, income: 0, sell: 1, fx: 2, buy: 3, out: 4, entry: 5 };
   const stream = [
     ...moves.map(m => ({ date: m.date, ord: m.kind === 'out' ? ORD.out : ORD.in, run: () => applyMove(m) })),
+    ...incs.map(r => ({ date: r.date, ord: ORD.income, run: () => applyIncome(r) })),
     ...fxs.map(x => ({ date: x.date, ord: ORD.fx, run: () => applyExchange(x) })),
     ...trades.filter(t => !upto || t.date <= upto)
       .map(t => ({ date: t.date, ord: t.side === 'buy' ? ORD.buy : ORD.sell, run: () => applyTrade(t) })),
@@ -312,6 +322,30 @@ export function exchangeLog(state) {
 // ---- 현금 입출금 (사용자가 확정하는 기록) ---------------------------------------
 export function cashMoveLog(state) {
   return [...(state.cashMoves || [])].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+// ---- 배당·이자 (매매가 아닌 수입) -----------------------------------------------
+// 자본이 아니라 **수익**이다. 그래서 원금(넣은 돈)에는 넣지 않고 장부의 현금만 늘린다.
+// 그 돈으로 주식을 사면 평가액에 남으므로 수익률에는 저절로 반영된다.
+export function incomeLog(state) {
+  return [...(state.incomes || [])].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+// 통화별 합계 + 종류별 내역 (화면 표시용)
+export function incomeTotals(state, upto = null) {
+  const rows = incomeLog(state).filter(r => !upto || r.date <= upto);
+  const sum = { KRW: 0, USD: 0 };
+  const byKind = {};
+  for (const r of rows) {
+    const cur = r.cur === 'USD' ? 'USD' : 'KRW';
+    const amt = Number(r.amount) || 0;
+    sum[cur] += amt;
+    const k = r.kind || '기타';
+    byKind[k] = byKind[k] || { KRW: 0, USD: 0, n: 0 };
+    byKind[k][cur] += amt; byKind[k].n++;
+  }
+  const totalKRW = sum.KRW + (P.toKRW(sum.USD, 'USD') || 0);
+  return { rows, sum, byKind, totalKRW, count: rows.length };
 }
 
 // 마지막 현금 입력 시점에 '앱 장부'와 '입력한 실제 잔액'이 얼마나 벌어졌나.

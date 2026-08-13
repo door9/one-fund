@@ -307,6 +307,64 @@ function openCashMoveForm() {
   });
 }
 
+// ---------- 배당·이자 기록 폼 ----------
+// 매매가 아닌 수입. 원금에는 넣지 않고 장부의 현금만 늘린다.
+function openIncomeForm() {
+  const today = todayStr();
+  const m = openModal(`
+    <h2>배당·이자 기록</h2>
+    <form id="inc-form">
+      <div class="form-grid">
+        <label class="fld">받은 날
+          <input type="date" name="date" max="${today}" value="${today}" required>
+        </label>
+        <label class="fld">종류
+          <select name="kind">
+            <option>배당</option>
+            <option>이자</option>
+            <option>기타</option>
+          </select>
+        </label>
+        <label class="fld">통화
+          <select name="cur">
+            <option value="KRW">원화</option>
+            <option value="USD">달러</option>
+          </select>
+        </label>
+        <label class="fld">받은 금액 <span class="muted small">— 세후</span>
+          <input name="amount" type="text" inputmode="decimal" autocomplete="off" required>
+        </label>
+        <label class="fld full">종목 (선택)
+          <input name="name" maxlength="40" placeholder="예: 코카콜라">
+        </label>
+        <label class="fld full">메모 (선택)
+          <input name="note" maxlength="60" placeholder="예: 3분기 배당">
+        </label>
+      </div>
+      <p class="hint" style="margin:8px 0 0;">배당·이자는 <b>원금(넣은 돈)에 들어가지 않습니다</b> — 자본이 아니라 수익이니까요.
+      대신 장부의 현금이 늘어, 그 돈으로 산 주식이 '밖에서 새로 들어온 돈'으로 잘못 잡히지 않습니다.</p>
+      <div class="btn-row" style="justify-content:flex-end; margin-top:16px;">
+        <button class="btn" type="button" data-x="cancel">취소</button>
+        <button class="btn primary" type="submit">저장</button>
+      </div>
+    </form>`);
+  m.querySelector('[data-x=cancel]').addEventListener('click', closeModal);
+  bindThousands(m.querySelector('#inc-form').amount);
+  m.querySelector('#inc-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const f = e.target;
+    const amount = numOf(f.amount);
+    if (!(amount > 0)) { toast('받은 금액을 입력하세요'); return; }
+    state.incomes = [...(state.incomes || []), {
+      id: uid(), date: f.date.value, cur: f.cur.value, amount,
+      kind: f.kind.value, name: f.name.value.trim(), note: f.note.value.trim(),
+      createdAt: Date.now(), updatedAt: Date.now(),
+    }];
+    saveNow(); closeModal(); render();
+    toast('배당·이자를 기록했습니다');
+  });
+}
+
 // ---------- 환전 기록 폼 ----------
 // 실제 증권사 화면에 적힌 대로 넣게 한다: 보낸 금액 · 적용 환율 · 수수료.
 // 받은 금액은 그 셋에서 계산해 즉시 보여 준다 — 명세서 숫자와 눈으로 대조하라는 뜻.
@@ -407,6 +465,18 @@ function vTrades() {
     </li>`;
   }).join('');
 
+  const inc = E.incomeTotals(state);
+  const incItems = inc.rows.slice().reverse().map(r => `
+    <li>
+      <div class="trade-head">
+        <span class="tag buy">${esc(r.kind || '기타')}</span>
+        <span class="dt muted small" style="margin-left:6px;">${r.date}${r.name ? ` · ${esc(r.name)}` : ''}</span>
+        <span class="amt small up">+${fmtMoney(r.amount, r.cur)}</span>
+      </div>
+      ${r.note ? `<div class="trade-body">${esc(r.note)}</div>` : ''}
+      <div class="trade-meta"><span style="margin-left:auto;"><button class="btn small danger" data-delinc="${r.id}">삭제</button></span></div>
+    </li>`).join('');
+
   const fxs = E.exchangeLog(state).slice().reverse();
   const fxItems = fxs.map(x => {
     const c = E.exchangeCalc(x);
@@ -430,6 +500,7 @@ function vTrades() {
       <button class="btn" data-act="sell">매도 기록</button>
       <button class="btn" data-act="mv2">입출금</button>
       <button class="btn" data-act="fx2">환전</button>
+      <button class="btn" data-act="inc2">배당·이자</button>
     </div>
     ${gap ? `<div class="notice" style="margin:0 0 12px;">
       <b>${gap.date} 입력하신 현금 잔액이 앱 장부와 다릅니다.</b>
@@ -450,6 +521,18 @@ function vTrades() {
       ${mvItems ? `<ul class="list-plain">${mvItems}</ul>` : '<div class="empty">아직 입출금 기록이 없습니다</div>'}
     </div>
     <div class="card">
+      <h3>배당·이자 <span class="muted small">— 매매가 아닌 수입</span></h3>
+      <p class="small muted" style="margin:4px 0 0;">
+        배당금·예탁금 이자·대여료처럼 <b>판 것도 아닌데 들어온 돈</b>입니다.
+        원금(넣은 돈)에는 넣지 않습니다 — 자본이 아니라 수익이니까요.
+      </p>
+      ${inc.count ? `<div class="notice" style="margin:8px 0 0;">지금까지 받은 배당·이자
+        <b>${[inc.sum.KRW ? fmtMoney(inc.sum.KRW) : null, inc.sum.USD ? fmtMoney(inc.sum.USD, 'USD') : null].filter(Boolean).join(' + ') || fmtMoney(0)}</b>
+        <span class="muted small">· ${inc.count}건</span></div>` : ''}
+      <div class="btn-row" style="margin:8px 0 0;"><button class="btn small primary" data-act="inc">배당·이자 기록</button></div>
+      ${incItems ? `<ul class="list-plain">${incItems}</ul>` : '<div class="empty">아직 배당·이자 기록이 없습니다</div>'}
+    </div>
+    <div class="card">
       <h3>환전 내역 <span class="muted small">— 선택 입력</span></h3>
       <p class="small muted" style="margin:4px 0 0;">
         안 넣어도 됩니다. 그때는 앱이 <b>매수 시점의 시장 환율</b>로 환전했다고 보고 계산합니다.
@@ -465,6 +548,18 @@ vTrades.bind_ = (root) => {
   // 매매 기록이 수백 건이면 아래 카드는 한참 스크롤해야 보인다 — 상단에도 같은 버튼을 둔다.
   root.querySelectorAll('[data-act=mv], [data-act=mv2]').forEach(b => b.addEventListener('click', () => openCashMoveForm()));
   root.querySelectorAll('[data-act=fx2]').forEach(b => b.addEventListener('click', () => openExchangeForm()));
+  root.querySelectorAll('[data-act=inc], [data-act=inc2]').forEach(b => b.addEventListener('click', () => openIncomeForm()));
+  root.querySelectorAll('[data-delinc]').forEach(b => b.addEventListener('click', async () => {
+    const r = (state.incomes || []).find(x => x.id === b.dataset.delinc);
+    if (!r) return;
+    if (!await confirmModal({
+      title: '이 배당·이자 기록을 지울까요?',
+      body: `${r.date} · ${r.kind || '기타'} ${fmtMoney(r.amount, r.cur)}`,
+      okLabel: '지우기', danger: true,
+    })) return;
+    Store.removeItem(state, 'incomes', b.dataset.delinc);
+    saveNow(); render(); toast('지웠습니다');
+  }));
   root.querySelectorAll('[data-delmv]').forEach(b => b.addEventListener('click', async () => {
     const mv = (state.cashMoves || []).find(x => x.id === b.dataset.delmv);
     if (!mv) return;
