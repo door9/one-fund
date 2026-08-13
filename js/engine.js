@@ -273,16 +273,18 @@ export function capitalLedger(state, upto = null) {
   // 세었다 — 원금이 그만큼 부풀어 달러 수익률이 -18%로 찍혔다.
   //
   // 같은 날짜 안에서는 실제 돈이 움직이는 순서를 따른다:
-  //   입금 → 환전 → 매매 → 출금 → 현금 잔액 입력
-  // 현금 입력이 마지막인 이유는 그것이 '그날 하루가 끝난 뒤의 잔액'이기 때문이다. 먼저
-  // 적용하면 그날 벌어진 일을 미리 지워 버린다. 입금이 환전보다 앞인 이유도 같다 —
-  // 돈을 넣고 바꾸는 게 실제 순서인데 뒤집으면 환전할 원화가 없다고 잘못 판단한다.
-  const ORD = { in: 0, fx: 1, trade: 2, out: 3, entry: 4 };
+  //   입금 → 매도 → 환전 → 매수 → 출금 → 현금 잔액 입력
+  //
+  // 돈이 생기는 일(입금·매도)을 먼저, 돈을 쓰는 일(매수·출금)을 나중에 둔다. 그래야
+  // "그날 판 돈으로 환전해서 샀다"는 실제 순서가 재현된다. 매도를 환전 뒤에 두었더니
+  // 2026-05-12에 원화를 판 돈이 아직 없다고 보고 162만원을 '밖에서 새로 들어온 돈'으로
+  // 세었다. 현금 입력이 맨 마지막인 이유는 그것이 '하루가 끝난 뒤의 잔액'이기 때문이다.
+  const ORD = { in: 0, sell: 1, fx: 2, buy: 3, out: 4, entry: 5 };
   const stream = [
     ...moves.map(m => ({ date: m.date, ord: m.kind === 'out' ? ORD.out : ORD.in, run: () => applyMove(m) })),
     ...fxs.map(x => ({ date: x.date, ord: ORD.fx, run: () => applyExchange(x) })),
     ...trades.filter(t => !upto || t.date <= upto)
-      .map(t => ({ date: t.date, ord: ORD.trade, run: () => applyTrade(t) })),
+      .map(t => ({ date: t.date, ord: t.side === 'buy' ? ORD.buy : ORD.sell, run: () => applyTrade(t) })),
     ...entries.map(e => ({ date: e.date, ord: ORD.entry, run: () => applyCashEntry(e) })),
   ];
   // 정렬은 안정적이므로 같은 날 같은 종류(특히 매매)는 원래 순서를 지킨다
@@ -434,20 +436,27 @@ export function portfolio(state, date = null) {
   //
   // 수익률은 **실제로 들어가고 나온 돈** 기준이다:
   //     수익   = 지금 자산 + 그동안 뺀 돈 − 그동안 넣은 돈
-  //     수익률 = 수익 ÷ 넣은 돈
-  // 순액(넣은 돈 − 뺀 돈)을 분모로 쓰면 출금할수록 분모가 작아져 수익률이 부풀려진다
-  // (달러에서 실제로 +108%가 나왔다. 같은 상황을 이 기준으로 보면 +22%다).
+  //     수익률 = 수익 ÷ (넣은 돈 − 뺀 돈)          ← 순투입
+  //
+  // 분모가 '넣은 돈 총액'이던 시절에는, 같은 돈이 계좌를 들락거리면 그때마다 분모만
+  // 불어나 수익률이 실제보다 낮게 찍혔다. 증권사 이체 내역을 전부 넣어 보니 4년간
+  // 총입금 2.70억·총출금 1.57억인데 순투입은 1.13억이었다 — 같은 날 나갔다 들어온
+  // 왕복만 8,527만원이다. 그 왕복은 자본을 더 넣은 게 아니므로 분모에서 뺀다.
+  //
+  // 순투입이 0 이하면(원금을 다 뺀 뒤 남은 이익으로만 굴리는 상태) 비율이 무의미하므로
+  // 수익률을 내지 않는다 — 분모가 0에 가까울수록 % 가 폭발하기 때문이다.
   const sleeves = {};
   for (const cur of ['KRW', 'USD']) {
     const value = (hold[cur] || 0) + cash[cur];
     const f = flow[cur];
     const contributed = f.extIn + f.xferIn;    // 그 통화로 들어온 돈 (환전해 온 것 포함)
     const withdrawn = f.extOut + f.xferOut;    // 그 통화에서 나간 돈
+    const net = contributed - withdrawn;       // 순투입 — 수익률의 분모
     const profit = value + withdrawn - contributed;
     sleeves[cur] = {
       cost: netCap[cur],                       // 지금 잠겨 있는 순 자본 (원금 표시용)
-      contributed, withdrawn, value, profit,
-      ret: contributed > 0 ? profit / contributed : null,
+      contributed, withdrawn, net, value, profit,
+      ret: net > 1e-6 ? profit / net : null,
       has: contributed > 0 || value > 1e-6,
     };
   }
@@ -462,6 +471,7 @@ export function portfolio(state, date = null) {
   // 합산 관점에서는 자본이 오간 게 아니다 — 넣으면 같은 돈을 두 번 세게 된다.
   const contributedKRW = flow.KRW.extIn + (P.toKRW(flow.USD.extIn, 'USD', d) || 0);
   const withdrawnKRW = flow.KRW.extOut + (P.toKRW(flow.USD.extOut, 'USD', d) || 0);
+  const netKRW = contributedKRW - withdrawnKRW;     // 순투입 — 합산 수익률의 분모
   const profitKRW = totalKRW + withdrawnKRW - contributedKRW;
 
   return {
@@ -473,11 +483,12 @@ export function portfolio(state, date = null) {
     cashTracked,                    // 그 시점에 적용 중인 현금 입력이 있는가 (없으면 현금 0으로 계산 중)
     cashSince: since,               // 처음 입력한 날 (이 날부터 현금이 평가액에 포함)
     cashAsOf: cashEntry?.date || null, // 지금 쓰이는 값을 넣은 날 (표시용 — cashSince와 다를 수 있다)
-    deposits: contributedKRW,       // 지금까지 펀드에 넣은 돈 (수익률의 분모)
-    netDeposits: costKRWnow,        // 지금 잠겨 있는 순 자본 (넣은 돈 − 뺀 돈)
+    deposits: contributedKRW,       // 지금까지 펀드에 넣은 돈 (총액)
+    netIn: netKRW,                  // 순투입 (넣은 돈 − 뺀 돈) — 수익률의 분모
+    netDeposits: costKRWnow,        // 지금 잠겨 있는 순 자본
     withdrawn: withdrawnKRW,        // 지금까지 뺀 돈
     profit: profitKRW,              // 자산 + 뺀 돈 − 넣은 돈
-    ret: contributedKRW > 0 ? profitKRW / contributedKRW : null,
+    ret: netKRW > 0 ? profitKRW / netKRW : null,
     realized,
   };
 }

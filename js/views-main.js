@@ -124,6 +124,8 @@ function vHome() {
   // 뺀 돈이 있으면 따로 보여 준다 — 안 그러면 '원금 > 평가'인데 수익률은 +라 앞뒤가 안 맞아 보인다
   const hasOut = (sK.withdrawn || 0) > 0 || (sU.withdrawn || 0) > 0;
   const outStr = byCur(sK.withdrawn || 0, sU.withdrawn || 0);
+  // 순투입 = 넣은 돈 − 뺀 돈. 수익률의 분모라 화면에 드러내야 앞뒤가 맞는다.
+  const netStr = byCur(sK.net || 0, sU.net || 0);
 
   const retParts = [];
   if (sK.has && sK.ret != null) retParts.push(`₩ <b class="${pctClass(sK.ret)}">${fmtPct(sK.ret)}</b>`);
@@ -142,12 +144,14 @@ function vHome() {
       <div class="row"><span class="muted small">보유 평가액 (${heroNote})</span></div>
       <div class="big">${fmtMoney(pf.totalKRW)}</div>
       <dl class="hero-facts">
-        <dt>원금</dt><dd>${depStr}</dd>
-        ${hasOut ? `<dt>출금</dt><dd>${outStr}</dd>` : ''}
+        <dt>넣은 돈</dt><dd>${depStr}</dd>
+        ${hasOut ? `<dt>뺀 돈</dt><dd>${outStr}</dd>` : ''}
+        ${hasOut ? `<dt>순투입</dt><dd>${netStr}</dd>` : ''}
         <dt>평가</dt><dd>${valStr}</dd>
         <dt>결산</dt><dd>${retParts.join(' · ') || '–'}</dd>
       </dl>
-      ${hasOut ? `<p class="small muted" style="margin:6px 0 0;">수익률은 <b>실제로 넣고 뺀 돈</b> 기준입니다 — (평가 + 출금 − 원금) ÷ 원금.</p>` : ''}
+      ${hasOut ? `<p class="small muted" style="margin:6px 0 0;">수익률은 <b>실제로 넣고 뺀 돈</b> 기준입니다 —
+      (평가 + 뺀 돈 − 넣은 돈) ÷ <b>순투입</b>. 같은 돈이 들락거려도 분모가 부풀지 않습니다.</p>` : ''}
     </div>
     ${ln ? `<a href="#/cost" class="card loan-card" style="display:block; text-decoration:none; color:inherit;">
       <div class="trade-head">
