@@ -321,13 +321,13 @@ function openExchangeForm() {
             <option value="USD">달러 → 원화</option>
           </select>
         </label>
-        <label class="fld">보낸 금액 <span class="muted small" data-fxcur>(원)</span>
+        <label class="fld">보낸 금액 <span class="muted small" data-fxcur>(원)</span> <span class="muted small">— 수수료 포함</span>
           <input name="amount" type="text" inputmode="decimal" autocomplete="off" required>
         </label>
         <label class="fld">적용 환율 (원/달러)
           <input name="rate" type="text" inputmode="decimal" autocomplete="off" required placeholder="예: 1,385.5">
         </label>
-        <label class="fld">환전 수수료 <span class="muted small" data-fxcur2>(원)</span>
+        <label class="fld">그중 수수료 <span class="muted small" data-fxcur2>(원)</span> <span class="muted small">— 참고용</span>
           <input name="fee" type="text" inputmode="decimal" autocomplete="off" placeholder="0">
         </label>
         <label class="fld full">메모 (선택)
@@ -335,7 +335,8 @@ function openExchangeForm() {
         </label>
       </div>
       <div class="notice" style="margin:10px 0 0;">받게 되는 금액: <b data-fxgot>–</b>
-        <br><span class="small">증권사 명세서의 금액과 같은지 확인해 주세요. 다르면 환율이나 수수료를 조정하시면 됩니다.</span></div>
+        <br><span class="small">보낸 금액 ÷ 적용 환율입니다. 증권사 화면의 금액과 같은지 확인해 주세요 — 다르면 환율을 조정하시면 됩니다.
+        수수료는 적용 환율에 이미 녹아 있으므로 계산에서 빼지 않고, 기록으로만 남깁니다.</span></div>
       <div class="btn-row" style="justify-content:flex-end; margin-top:16px;">
         <button class="btn" type="button" data-x="cancel">취소</button>
         <button class="btn primary" type="submit">저장</button>
@@ -369,7 +370,7 @@ function openExchangeForm() {
     const c = E.exchangeCalc({ from: f.from.value, amount: numOf(f.amount), rate: numOf(f.rate), fee: numOf(f.fee) });
     if (!(c.sent > 0)) { toast('보낸 금액을 입력하세요'); return; }
     if (!(c.rate > 0)) { toast('적용 환율을 입력하세요'); return; }
-    if (c.fee >= c.sent) { toast('수수료가 보낸 금액보다 큽니다'); return; }
+    if (c.fee > c.sent) { toast('수수료가 보낸 금액보다 큽니다'); return; }
     state.exchanges = [...(state.exchanges || []), {
       id: uid(), date: f.date.value, from: c.from,
       amount: c.sent, rate: c.rate, fee: c.fee,
@@ -676,8 +677,8 @@ export function openTradeForm(side, existing = null) {
             ${Store.SELL_REASON_TYPES.map(x => `<option ${t.sellReasonType === x ? 'selected' : ''}>${x}</option>`).join('')}
           </select>
         </label>
-        <label class="fld full">매도 이유
-          <textarea name="reason" placeholder="위에 보이는 '살 때의 나'와 대조해서 쓰기" required>${esc(t.reason || '')}</textarea>
+        <label class="fld full">매도 이유 (선택)
+          <textarea name="reason" placeholder="위에 보이는 '살 때의 나'와 대조해서 쓰기">${esc(t.reason || '')}</textarea>
         </label>
         `}
         <div class="full">

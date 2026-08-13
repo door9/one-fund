@@ -170,17 +170,18 @@ export function capitalLedger(state, upto = null) {
   //
   // 환전은 새 돈이 아니라 **통화 사이의 이동**이므로 나간 통화의 원금을 줄이고 들어온 통화의
   // 원금을 늘린다(아래 매수 시 자동 환전과 같은 원칙). 다른 점은 두 가지다.
-  //  - 환율이 시장 중간값이 아니라 **실제 적용 환율**이다(스프레드 포함).
-  //  - **수수료**는 자본 이동이 아니라 비용이다. 장부(pool)에서는 빠지지만 원금에서는 빼지 않는다
-  //    — 빼 버리면 수수료만큼 원금이 줄어 수익률이 되레 좋아 보인다. 비용은 평가액을 깎아야 한다.
+  // 다른 점은 환율이 시장 중간값이 아니라 **실제 적용 환율**이라는 것(스프레드 포함).
+  //
+  // '보낸 금액'은 증권사 화면에 찍힌 그대로 — **수수료가 이미 포함된 금액**이다. 그래서
+  // 따로 빼지 않는다. 수수료(x.fee)는 "얼마를 냈는가"를 남겨 두는 참고용 기록일 뿐
+  // 계산에 쓰지 않는다 — 적용 환율에 이미 녹아 있어 또 빼면 두 번 빼는 셈이 된다.
   const applyExchange = (x) => {
     const from = x.from === 'USD' ? 'USD' : 'KRW';
     const to = from === 'KRW' ? 'USD' : 'KRW';
     const rate = Number(x.rate) || 0;
     if (!(rate > 0)) return;
     const sent = Math.max(0, Number(x.amount) || 0);
-    const fee = Math.max(0, Number(x.fee) || 0);
-    const net = Math.max(0, sent - fee);                       // 수수료를 뺀 실제 환전액
+    const net = sent;
     const got = from === 'KRW' ? net / rate : net * rate;
 
     // 장부에 그 돈이 없으면 밖에서 새로 들여와 환전한 것이다 → 그만큼은 새 외부 자금
@@ -319,15 +320,18 @@ export function cashGap(state) {
 }
 
 // 환전 한 건의 계산 결과 (화면 표시·미리보기 공용)
+// '보낸 금액'은 증권사 화면에 찍힌 그대로 — **수수료가 이미 포함된 금액**이다.
+// 그래서 받는 금액은 보낸 금액을 그대로 환율로 나눈(곱한) 값이고, 수수료는 빼지 않는다.
+// (수수료는 적용 환율에 스프레드로 녹아 있다. 여기서 또 빼면 두 번 빼는 셈이 된다.)
+// fee는 "얼마를 수수료로 냈는가"를 남겨 두는 참고용 기록일 뿐 계산에 쓰지 않는다.
 export function exchangeCalc({ from, amount, rate, fee }) {
   const f = from === 'USD' ? 'USD' : 'KRW';
   const to = f === 'KRW' ? 'USD' : 'KRW';
   const r = Number(rate) || 0;
   const sent = Math.max(0, Number(amount) || 0);
   const feeAmt = Math.max(0, Number(fee) || 0);
-  const net = Math.max(0, sent - feeAmt);
-  const got = r > 0 ? (f === 'KRW' ? net / r : net * r) : null;
-  return { from: f, to, sent, fee: feeAmt, net, rate: r, got };
+  const got = r > 0 ? (f === 'KRW' ? sent / r : sent * r) : null;
+  return { from: f, to, sent, fee: feeAmt, net: sent, rate: r, got };
 }
 
 // 그 시점에 적용 중인 입력 한 줄 (없으면 null). 값이 언제 넣은 것인지 표시할 때도 쓴다.
