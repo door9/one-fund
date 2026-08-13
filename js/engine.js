@@ -272,9 +272,20 @@ export function capitalLedger(state, upto = null) {
       pool[cur] += t.price * t.qty - (t.fee || 0);
     }
   }
-  while (mi < moves.length) applyMove(moves[mi++]);
-  while (xi < fxs.length) applyExchange(fxs[xi++]);
-  while (ei < entries.length) applyCashEntry(entries[ei++]);
+  // 마지막 매매 뒤에 남은 사건들 — 반드시 **날짜 순**으로 처리한다.
+  //
+  // 종류별로 몰아서 처리하면(입출금 전부 → 환전 전부 → 현금 입력 전부) 앞 날짜의 현금 입력이
+  // 뒷 날짜의 출금보다 나중에 적용된다. 현금 입력은 장부를 그 값으로 덮어쓰는 일이라
+  // 그 출금이 통째로 지워진다 — 7/29 잔액을 적어 두고 7/30에 출금한 경우, 출금을 아무리
+  // 정확히 기록해도 "장부와 다릅니다" 경고가 사라지지 않았다.
+  //
+  // 같은 날짜 안에서의 순서는 위 루프와 같게 둔다(현금 입력 → 입출금 → 환전).
+  const rest = [
+    ...entries.slice(ei).map(e => ({ date: e.date, ord: 0, run: () => applyCashEntry(e) })),
+    ...moves.slice(mi).map(m => ({ date: m.date, ord: 1, run: () => applyMove(m) })),
+    ...fxs.slice(xi).map(x => ({ date: x.date, ord: 2, run: () => applyExchange(x) })),
+  ].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.ord - b.ord);
+  for (const r of rest) r.run();
 
   events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   return { pool, netCap, events, flow };
