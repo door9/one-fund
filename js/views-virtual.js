@@ -99,6 +99,14 @@ function openPositionModal(fund) {
           <input name="symbol" list="vp-symlist" placeholder="티커 (예: 005930 또는 AAPL)" required autocomplete="off">
           ${symbolDatalist('vp-symlist')}
         </label>
+        <label class="fld full" id="vp-mkt-row" hidden>어느 시장의 종목입니까 <span class="muted small">— 처음 넣는 종목이라 확인이 필요합니다</span>
+          <select name="market">
+            <option value="">고르세요</option>
+            <option value="KS">한국 · 코스피</option>
+            <option value="KQ">한국 · 코스닥</option>
+            <option value="US">미국</option>
+          </select>
+        </label>
         <label class="fld">매수일
           <input type="date" name="date" max="${today}" value="${today}" required>
         </label>
@@ -123,22 +131,46 @@ function openPositionModal(fund) {
 
   // 종목·날짜를 채우면 그날 종가를 안내해 오타를 줄인다
   const f = m.querySelector('#vp-form');
+  const mktRow = m.querySelector('#vp-mkt-row');
+
+  // 처음 보는 종목이면 시장을 묻는다 — 코스닥을 코스피로 찍어 시세가 조용히 비는 것을 막는다
+  const syncMarketRow = () => {
+    const raw = f.symbol.value.trim().toUpperCase();
+    const need = P.needsMarket(raw);
+    mktRow.hidden = !need;
+    if (!need) { f.market.value = ''; return; }
+    if (!P.KR_CODE.test(raw)) f.market.value = 'US';
+    else if (f.market.value === 'US') f.market.value = '';
+  };
+  const formSymbol = () => mktRow.hidden
+    ? P.resolveSymbol(f.symbol.value)
+    : P.applyMarket(f.symbol.value, f.market.value);
+
   const hintClose = () => {
-    const sym = P.resolveSymbol(f.symbol.value);
+    syncMarketRow();
+    const sym = formSymbol();
     const c = sym && f.date.value ? P.closeOn(sym, f.date.value) : null;
     if (c != null && !f.price.value) f.price.placeholder = `그날 종가 ${c}`;
   };
   f.symbol.addEventListener('change', hintClose);
+  f.symbol.addEventListener('input', syncMarketRow);
+  f.market.addEventListener('change', hintClose);
   f.date.addEventListener('change', hintClose);
   // 가격칸 방향키 — 한국 종목이면 호가 단위로, 그 외(달러 등)는 기본(±1) 동작.
   bindKrArrowStep(f.price, () => {
-    const raw = f.symbol.value;
-    return raw ? P.currencyOf(P.resolveSymbol(raw)) : null;
+    const sym = formSymbol();
+    return sym ? P.currencyOf(sym) : null;
   });
 
   f.addEventListener('submit', e => {
     e.preventDefault();
-    const symbol = P.resolveSymbol(f.symbol.value);
+    syncMarketRow();
+    if (!mktRow.hidden && !f.market.value) {
+      toast('처음 넣는 종목입니다. 어느 시장인지 골라 주세요', 3600);
+      f.market.focus();
+      return;
+    }
+    const symbol = formSymbol();
     if (!symbol) { toast('종목을 입력하세요'); return; }
     const price = parseFloat(f.price.value);
     const qty = parseFloat(f.qty.value);

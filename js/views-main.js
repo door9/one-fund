@@ -649,6 +649,15 @@ export function openTradeForm(side, existing = null) {
                <datalist id="symlist">${knownList}</datalist>`
             : `<select name="symbol" required>${sellOptions}</select>`}
         </label>
+        ${isBuy ? `
+        <label class="fld full" id="mkt-row" hidden>어느 시장의 종목입니까 <span class="muted small">— 처음 기록하는 종목이라 확인이 필요합니다</span>
+          <select name="market">
+            <option value="">고르세요</option>
+            <option value="KS">한국 · 코스피</option>
+            <option value="KQ">한국 · 코스닥</option>
+            <option value="US">미국</option>
+          </select>
+        </label>` : ''}
         <label class="fld">날짜
           <input type="date" name="date" max="${today}" value="${t.date || today}" required>
         </label>
@@ -696,10 +705,33 @@ export function openTradeForm(side, existing = null) {
   const curHint = m.querySelector('#cur-hint');
   const nameHint = m.querySelector('#name-hint');
 
+  const mktRow = m.querySelector('#mkt-row');
+
+  // 처음 보는 종목일 때만 시장을 묻는다 — 이미 아는 종목엔 칸이 나타나지 않는다.
+  function syncMarketRow() {
+    if (!mktRow) return;
+    const raw = form.symbol.value.trim().toUpperCase();
+    const need = P.needsMarket(raw);
+    mktRow.hidden = !need;
+    if (!need) { form.market.value = ''; return; }
+    // 종목을 바꾸면 앞서 고른 값이 그대로 남지 않게 입력 모양에 맞춰 다시 잡는다.
+    // 영문 티커는 KRX일 수 없으므로 미국으로 두고, 국내 코드는 반드시 직접 고르게 한다.
+    if (!P.KR_CODE.test(raw)) form.market.value = 'US';
+    else if (form.market.value === 'US') form.market.value = '';
+  }
+
+  // 폼이 가리키는 최종 심볼 — 시장을 골랐으면 그것을 따르고, 아니면 종전대로 추정한다
+  function formSymbol() {
+    return mktRow && !mktRow.hidden
+      ? P.applyMarket(form.symbol.value, form.market.value)
+      : P.resolveSymbol(form.symbol.value);
+  }
+
   function updateSymbolInfo() {
+    syncMarketRow();
     const raw = form.symbol.value;
     if (!raw) { if (nameHint) nameHint.textContent = ''; return; }
-    const sym = P.resolveSymbol(raw);
+    const sym = formSymbol();
     const info = P.info(sym);
     if (info) {
       if (nameHint) nameHint.textContent = `— ${info.name}`; // 종목명 자동
@@ -721,12 +753,14 @@ export function openTradeForm(side, existing = null) {
     }
   }
   form.symbol.addEventListener('change', updateSymbolInfo);
+  form.symbol.addEventListener('input', syncMarketRow);   // 타이핑 도중에도 칸이 바로 뜨게
+  form.market?.addEventListener('change', updateSymbolInfo);
   // 세 자리마다 콤마 — 큰 숫자를 눈으로 확인하며 넣을 수 있게. 값은 numOf로 읽는다.
   [form.price, form.qty, form.fee].forEach(el => el && bindThousands(el));
   // 가격칸 방향키 — 한국 종목이면 호가 단위로, 그 외(달러 등)는 기본(±1) 동작.
   bindKrArrowStep(form.price, () => {
-    const raw = form.symbol.value;
-    return raw ? P.currencyOf(P.resolveSymbol(raw)) : null;
+    const sym = formSymbol();
+    return sym ? P.currencyOf(sym) : null;
   });
   if (!isBuy) {
     const renderPastRecord = () => {
@@ -753,7 +787,13 @@ export function openTradeForm(side, existing = null) {
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
-    const symbol = isBuy ? P.resolveSymbol(form.symbol.value) : form.symbol.value;
+    if (isBuy) syncMarketRow();   // 저장 직전 상태로 맞춘다 (붙여넣기로 채운 경우 대비)
+    if (isBuy && mktRow && !mktRow.hidden && !form.market.value) {
+      toast('처음 기록하는 종목입니다. 어느 시장인지 골라 주세요', 3600);
+      form.market.focus();
+      return;
+    }
+    const symbol = isBuy ? formSymbol() : form.symbol.value;
     const price = numOf(form.price);   // 콤마를 뺀 실제 숫자 (form.price.value 직접 쓰면 안 된다)
     const qty = numOf(form.qty);
     if (!symbol || !(price > 0) || !(qty > 0)) { toast('종목·가격·수량을 확인하세요'); return; }

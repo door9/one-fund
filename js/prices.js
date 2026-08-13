@@ -311,7 +311,7 @@ export function toKRW(amount, currency, date = null) {
 // 한국 종목 코드인가 — 6자리 숫자(005930), 또는 숫자로 시작하는 6자리 영숫자(0167A0).
 // 후자는 KRX가 새로 쓰는 형식(ETF·신주 등)이라 숫자만 보면 놓친다. 실제로 0167A0을
 // 그대로 야후에 보내 404가 났고, 시세가 없어 평가가 통째로 계산되지 않았다.
-const KR_CODE = /^\d{4}[0-9A-Z]{2}$/;
+export const KR_CODE = /^\d{4}[0-9A-Z]{2}$/;
 
 // KR 코드 → 실제 심볼 추정 (.KS / .KQ). 시세 파일이 있으면 그걸 우선.
 //
@@ -329,6 +329,29 @@ export function resolveSymbol(input) {
     return s + '.KS'; // 미등록이면 일단 코스피로 추정
   }
   return s;
+}
+
+// 이 입력이 "어느 시장인지" 사용자에게 물어야 하는가.
+// 겉모습만으로는 코스피와 코스닥을 가릴 수 없다. 추정으로 .KS를 붙였다가 코스닥 종목을
+// 코스피로 찍으면, 야후가 404 대신 최근 며칠짜리 껍데기를 주기 때문에 이름은 멀쩡하게
+// 나오면서 과거 시세만 조용히 비어 평가가 통째로 어긋난다 — 실제로 겪은 함정이라
+// 이제는 추정하지 않고 묻는다.
+export function needsMarket(input) {
+  const s = (input || '').trim().toUpperCase();
+  if (!s) return false;
+  if (/\.(KS|KQ)$/.test(s)) return false;                     // 이미 시장이 붙어 있다
+  if (map.has(s) || map.has(s + '.KS') || map.has(s + '.KQ')) return false; // 이미 아는 종목
+  return true;
+}
+
+// 사용자가 고른 시장을 붙여 최종 심볼을 만든다. market: 'KS' | 'KQ' | 'US' | ''(미선택)
+export function applyMarket(input, market) {
+  const s = (input || '').trim().toUpperCase();
+  if (!s) return null;
+  const bare = s.replace(/\.(KS|KQ)$/, '');
+  if (market === 'KS' || market === 'KQ') return bare + '.' + market;
+  if (market === 'US') return bare;
+  return resolveSymbol(s);
 }
 
 export function currencyOf(sym) {
