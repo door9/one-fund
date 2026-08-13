@@ -156,11 +156,8 @@ export function capitalLedger(state, upto = null) {
                  USD: { extIn: 0, extOut: 0, xferIn: 0, xferOut: 0 } };
   const events = [];
   const entries = cashLog(state).filter(e => !upto || e.date <= upto);
-  let ei = 0;
   const fxs = exchangeLog(state).filter(x => !upto || x.date <= upto);
-  let xi = 0;
   const moves = cashMoveLog(state).filter(m => !upto || m.date <= upto);
-  let mi = 0;
 
   const push = (date, cur, amt, src) => {
     if (Math.abs(amt) > 1e-9) events.push({ date, cur, amt, amtKRW: P.toKRW(amt, cur, date) || 0, src });
@@ -228,12 +225,7 @@ export function capitalLedger(state, upto = null) {
     push(mv.date, cur, signed, 'cash');
   };
 
-  for (const t of trades) {
-    if (upto && t.date > upto) break;
-    while (ei < entries.length && entries[ei].date < t.date) applyCashEntry(entries[ei++]);
-    // 입출금·환전은 그날의 매매보다 먼저 반영한다 — 돈을 넣고(바꾸고) 사는 게 실제 순서이므로.
-    while (mi < moves.length && moves[mi].date <= t.date) applyMove(moves[mi++]);
-    while (xi < fxs.length && fxs[xi].date <= t.date) applyExchange(fxs[xi++]);
+  const applyTrade = (t) => {
     const cur = P.currencyOf(t.symbol);
     if (t.side === 'buy') {
       const cost = t.price * t.qty + (t.fee || 0);
@@ -271,21 +263,31 @@ export function capitalLedger(state, upto = null) {
     } else {
       pool[cur] += t.price * t.qty - (t.fee || 0);
     }
-  }
-  // 마지막 매매 뒤에 남은 사건들 — 반드시 **날짜 순**으로 처리한다.
+  };
+
+  // 네 갈래(매매·환전·입출금·현금 입력)를 **한 줄로 세워 날짜 순으로** 처리한다.
   //
-  // 종류별로 몰아서 처리하면(입출금 전부 → 환전 전부 → 현금 입력 전부) 앞 날짜의 현금 입력이
-  // 뒷 날짜의 출금보다 나중에 적용된다. 현금 입력은 장부를 그 값으로 덮어쓰는 일이라
-  // 그 출금이 통째로 지워진다 — 7/29 잔액을 적어 두고 7/30에 출금한 경우, 출금을 아무리
-  // 정확히 기록해도 "장부와 다릅니다" 경고가 사라지지 않았다.
+  // 종전에는 매매를 기준으로 돌면서 나머지를 그때그때 따라잡는 방식이었는데, 매매가 없는
+  // 날이 여러 개 이어지면 순서가 뒤엉켰다. 실제로 7/30 현금 입력(달러 0)이 같은 날 환전보다
+  // 먼저 적용돼, 환전할 때 장부에 달러가 없다고 보고 $25,253을 '밖에서 새로 들어온 돈'으로
+  // 세었다 — 원금이 그만큼 부풀어 달러 수익률이 -18%로 찍혔다.
   //
-  // 같은 날짜 안에서의 순서는 위 루프와 같게 둔다(현금 입력 → 입출금 → 환전).
-  const rest = [
-    ...entries.slice(ei).map(e => ({ date: e.date, ord: 0, run: () => applyCashEntry(e) })),
-    ...moves.slice(mi).map(m => ({ date: m.date, ord: 1, run: () => applyMove(m) })),
-    ...fxs.slice(xi).map(x => ({ date: x.date, ord: 2, run: () => applyExchange(x) })),
-  ].sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.ord - b.ord);
-  for (const r of rest) r.run();
+  // 같은 날짜 안에서는 실제 돈이 움직이는 순서를 따른다:
+  //   입금 → 환전 → 매매 → 출금 → 현금 잔액 입력
+  // 현금 입력이 마지막인 이유는 그것이 '그날 하루가 끝난 뒤의 잔액'이기 때문이다. 먼저
+  // 적용하면 그날 벌어진 일을 미리 지워 버린다. 입금이 환전보다 앞인 이유도 같다 —
+  // 돈을 넣고 바꾸는 게 실제 순서인데 뒤집으면 환전할 원화가 없다고 잘못 판단한다.
+  const ORD = { in: 0, fx: 1, trade: 2, out: 3, entry: 4 };
+  const stream = [
+    ...moves.map(m => ({ date: m.date, ord: m.kind === 'out' ? ORD.out : ORD.in, run: () => applyMove(m) })),
+    ...fxs.map(x => ({ date: x.date, ord: ORD.fx, run: () => applyExchange(x) })),
+    ...trades.filter(t => !upto || t.date <= upto)
+      .map(t => ({ date: t.date, ord: ORD.trade, run: () => applyTrade(t) })),
+    ...entries.map(e => ({ date: e.date, ord: ORD.entry, run: () => applyCashEntry(e) })),
+  ];
+  // 정렬은 안정적이므로 같은 날 같은 종류(특히 매매)는 원래 순서를 지킨다
+  stream.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.ord - b.ord);
+  for (const s of stream) s.run();
 
   events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   return { pool, netCap, events, flow };
