@@ -282,9 +282,15 @@ function openCashMoveForm() {
         <label class="fld full">메모 (선택)
           <input name="note" maxlength="60" placeholder="예: 생활비로 인출">
         </label>
+        <label class="fld full" style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" name="notmine" style="width:auto; margin:0;">
+          <span>내 자본이 아닙니다 <span class="muted small">— 남의 돈을 잠시 맡아 계좌에 둔 경우</span></span>
+        </label>
       </div>
       <p class="hint" style="margin:8px 0 0;">출금은 투입 원금에서 빠지고, 입금은 더해집니다.
-      수익률은 이 돈이 오간 것 때문에 좋아지거나 나빠지지 않습니다 — 자본 이동이지 손익이 아니니까요.</p>
+      수익률은 이 돈이 오간 것 때문에 좋아지거나 나빠지지 않습니다 — 자본 이동이지 손익이 아니니까요.<br>
+      <b>'내 자본이 아닙니다'</b>를 켜면 원금·출금에는 넣지 않고 장부의 현금만 맞춥니다. 그 돈으로 결제된
+      내 매수가 '밖에서 새로 들어온 돈'으로 잘못 잡히는 것을 막아 줍니다.</p>
       <div class="btn-row" style="justify-content:flex-end; margin-top:16px;">
         <button class="btn" type="button" data-x="cancel">취소</button>
         <button class="btn primary" type="submit">저장</button>
@@ -300,6 +306,7 @@ function openCashMoveForm() {
     state.cashMoves = [...(state.cashMoves || []), {
       id: uid(), date: f.date.value, kind: f.kind.value, cur: f.cur.value,
       amount, note: f.note.value.trim(),
+      ...(f.notmine.checked ? { capital: false } : {}),
       createdAt: Date.now(), updatedAt: Date.now(),
     }];
     saveNow(); closeModal(); render();
@@ -457,6 +464,7 @@ function vTrades() {
     <li>
       <div class="trade-head">
         <span class="tag ${out ? 'sell' : 'buy'}">${out ? '출금' : '입금'}</span>
+        ${mv.capital === false ? '<span class="tag" style="margin-left:4px;">내 자본 아님</span>' : ''}
         <span class="dt muted small" style="margin-left:6px;">${mv.date}</span>
         <span class="amt small ${out ? 'down' : 'up'}">${out ? '-' : '+'}${fmtMoney(mv.amount, mv.cur)}</span>
       </div>

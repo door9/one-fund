@@ -223,12 +223,18 @@ export function capitalLedger(state, upto = null) {
   };
 
   // 사용자가 확정한 입출금. 이것만이 현금 쪽 자본 이동의 근거다.
+  //
+  // capital === false 이면 **계좌를 거쳐 갔을 뿐 내 자본이 아닌 돈**이다(남의 돈을 잠시
+  // 맡아 굴리는 경우). 계좌에 실제로 있었으므로 장부의 현금은 늘리되, 원금·출금에는
+  // 넣지 않는다. 이게 없으면 그 돈으로 결제된 내 매수가 '밖에서 새로 들어온 돈'으로
+  // 잡혀 원금이 부풀었다 — 2026-08-05 매수 $293이 실제로 그랬다.
   const applyMove = (mv) => {
     const cur = mv.cur === 'USD' ? 'USD' : 'KRW';
     const amt = Math.max(0, Number(mv.amount) || 0);
     if (amt <= 0) return;
     const signed = mv.kind === 'out' ? -amt : amt;
     pool[cur] += signed;
+    if (mv.capital === false) return;          // 남의 돈 — 자본으로 세지 않는다
     netCap[cur] += signed;
     if (signed > 0) flow[cur].extIn += amt; else flow[cur].extOut += amt;
     push(mv.date, cur, signed, 'cash');
