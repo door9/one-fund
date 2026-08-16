@@ -834,6 +834,9 @@ export function openTradeForm(side, existing = null) {
       : P.resolveSymbol(form.symbol.value);
   }
 
+  // 가격칸의 현재 값이 '앱이 채운 제안값'인가. 기존 기록을 고치는 중이면 사용자의 값이므로 false.
+  let priceAuto = !(t.price ?? '');
+
   function updateSymbolInfo() {
     syncMarketRow();
     const raw = form.symbol.value;
@@ -849,10 +852,14 @@ export function openTradeForm(side, existing = null) {
       curHint.textContent = l
         ? ` · 최근 종가 ${fmtMoney(l.close, info.currency)} (${l.date})`
         : ` · ${info.currency}`;
-      // 날짜의 종가 자동 제안 (가격 비어 있을 때)
-      if (!form.price.value) {
+      // 그 날짜의 종가를 가격칸에 제안한다.
+      //
+      // 비어 있을 때만 채우면, 한 번 채워진 뒤 종목을 바꿔도 앞 종목의 값이 그대로 남는다.
+      // 그래서 '앱이 채운 값'인지를 따로 기억해 두고(priceAuto), 그런 값은 종목이 바뀔 때
+      // 새 종목의 종가로 갈아 끼운다. 사용자가 직접 고친 값은 건드리지 않는다.
+      if (!form.price.value || priceAuto) {
         const c = P.closeOn(sym, form.date.value || today);
-        if (c) setNum(form.price, c);
+        if (c) { setNum(form.price, c); priceAuto = true; }
       }
     } else {
       if (nameHint) nameHint.textContent = '';
@@ -862,6 +869,8 @@ export function openTradeForm(side, existing = null) {
   form.symbol.addEventListener('change', updateSymbolInfo);
   form.symbol.addEventListener('input', syncMarketRow);   // 타이핑 도중에도 칸이 바로 뜨게
   form.market?.addEventListener('change', updateSymbolInfo);
+  // 사용자가 가격을 직접 건드린 순간부터는 앱이 갈아 끼우지 않는다
+  form.price.addEventListener('input', () => { priceAuto = false; });
   // 세 자리마다 콤마 — 큰 숫자를 눈으로 확인하며 넣을 수 있게. 값은 numOf로 읽는다.
   [form.price, form.qty, form.fee].forEach(el => el && bindThousands(el));
   // 가격칸 방향키 — 한국 종목이면 호가 단위로, 그 외(달러 등)는 기본(±1) 동작.
