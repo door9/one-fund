@@ -92,6 +92,30 @@ registerView('worlds', vWorlds);
 // ---------- 개입 점수 ----------
 // 조회 조건(전체/연도별/종목별). 화면을 다시 그려도 유지된다.
 let actionsFilter = { year: null, symbol: null };
+// 기본은 상·하위 5개씩만. 전부 늘어놓으면 수백 줄이라 어느 게 중요한지 안 보인다.
+let actionsShowAll = false;
+const TOP_N = 5;
+
+// 같은 종목이 여러 번 보이지 않게 한 줄만 남긴다 — 수량이 큰 쪽(같으면 최근 것).
+// 한 종목을 여러 번 사고팔았다면 가장 크게 움직인 판단이 그 종목의 대표다.
+function pickPerSymbol(rows, symOf, qtyOf, dateOf) {
+  const best = new Map();
+  for (const r of rows) {
+    const cur = best.get(symOf(r));
+    if (!cur || qtyOf(r) > qtyOf(cur) || (qtyOf(r) === qtyOf(cur) && dateOf(r) > dateOf(cur))) {
+      best.set(symOf(r), r);
+    }
+  }
+  return [...best.values()];
+}
+
+// 점수 순 상위 N / 하위 N. 점수가 없는 기록(시세 없음)은 줄을 세울 수 없어 뺀다.
+// 합쳐서 2N 이하면 가운데를 자를 게 없으므로 그냥 다 준다.
+function topBottom(rows, scoreOf, n) {
+  const scored = rows.filter(r => scoreOf(r) != null).sort((a, b) => scoreOf(b) - scoreOf(a));
+  if (scored.length <= n * 2) return { top: scored, bottom: [] };
+  return { top: scored.slice(0, n), bottom: scored.slice(-n) };
+}
 
 function vActions() {
   const ss = E.sellScores(state);
@@ -145,7 +169,7 @@ function vActions() {
   const scoredAd = adRows.filter(x => x.delta != null);
   const avgDelta = scoredAd.length ? scoredAd.reduce((s, x) => s + x.delta, 0) / scoredAd.length : null;
 
-  const sellBody = sellRows.map(({ r, sym, name, horizon, frozenSince }) => `
+  const sellRowHtml = ({ r, sym, name, horizon, frozenSince }) => `
     <tr>
       <td>
         <b class="symlink" data-symlink="${esc(sym)}">${esc(name)}</b>
@@ -153,9 +177,9 @@ function vActions() {
       </td>
       ${E.SELL_HORIZONS.map(m => `<td class="num ${g2c(horizon['m' + m])}">${g2p(horizon['m' + m])}</td>`).join('')}
       <td class="num ${g2c(horizon.now)}"><b>${g2p(horizon.now)}</b>${frozenSince ? `<br><span class="muted small" title="거래정지·상장폐지로 시세가 멈춰 있습니다">${frozenSince} 정지</span>` : ''}</td>
-    </tr>`).join('');
+    </tr>`;
 
-  const adBody = adRows.map(x => `
+  const adRowHtml = x => `
     <tr>
       <td>
         <b class="symlink" data-symlink="${esc(x.t.symbol)}">${esc(x.t.name || x.t.symbol)}</b>
@@ -164,7 +188,33 @@ function vActions() {
       <td class="num ${g2c(x.growth)}">${g2p(x.growth)}</td>
       <td class="num ${g2c(x.benchGrowth)}">${g2p(x.benchGrowth)}</td>
       <td class="num ${x.delta == null ? 'flat' : pctClass(x.delta)}"><b>${x.delta == null ? '–' : fmtPct(x.delta) + 'P'}</b></td>
-    </tr>`).join('');
+    </tr>`;
+
+  // 간추린 표 = 종목 중복을 없앤 뒤 점수 상위 N / 하위 N. 가운데는 잘라낸다.
+  const sep = (cols, label) => `<tr class="year-sep"><td colspan="${cols}">${label}</td></tr>`;
+  const digest = (rows, rowHtml, scoreOf, cols, topLabel, botLabel) => {
+    const { top, bottom } = topBottom(rows, scoreOf, TOP_N);
+    if (!top.length) return '';
+    if (!bottom.length) return top.map(rowHtml).join('');
+    return sep(cols, topLabel) + top.map(rowHtml).join('')
+         + sep(cols, botLabel) + bottom.map(rowHtml).join('');
+  };
+
+  const sellPicked = pickPerSymbol(sellRows, x => x.sym, x => x.r.sell.qty, x => x.r.sell.date);
+  const adPicked = pickPerSymbol(adRows, x => x.t.symbol, x => x.t.qty, x => x.t.date);
+  const sellCols = 2 + E.SELL_HORIZONS.length;
+
+  const sellBody = actionsShowAll ? sellRows.map(sellRowHtml).join('')
+    : digest(sellPicked, sellRowHtml, x => x.horizon.now, sellCols,
+        '안 팔았다면 지금 가장 많이 올랐을 매도', '안 팔았다면 지금 가장 많이 내렸을 매도');
+
+  const adBody = actionsShowAll ? adRows.map(adRowHtml).join('')
+    : digest(adPicked, adRowHtml, x => x.delta, 4,
+        '지수보다 가장 잘한 물타기', '지수보다 가장 못한 물타기');
+
+  // 간추린 표라는 사실을 표 아래 안내에 한 문장으로 붙인다.
+  const digestNote = actionsShowAll ? ''
+    : `<b>종목이 겹치지 않게 상·하위 ${TOP_N}개씩만 보여줍니다</b>(한 종목이 여러 번이면 수량이 큰 기록). 전부 보려면 화면 맨 아래 버튼을 누르세요. `;
 
   return `
     <div class="view-title">회상</div>
@@ -172,28 +222,31 @@ function vActions() {
     ${filterBar}
     <div class="card">
       <h3>매도 채점 — 판 뒤 그 주식은 어떻게 됐나${scopeNote}</h3>
-      ${sellRows.length ? `
+      ${sellBody ? `
       <div class="tbl-wrap"><table class="tbl">
         <tr><th>매도</th>${E.SELL_HORIZONS.map(m => `<th class="num">+${m}개월</th>`).join('')}<th class="num">현재까지</th></tr>
         ${sellBody}
       </table></div>
       ${scoredSell.length ? `<p class="small" style="margin-bottom:0;">
         매도 ${scoredSell.length}건. 판 종목들은 매도 후 현재까지 평균 <b class="${pctClass(avgMissed)}">${fmtPct(avgMissed)}</b> 움직였습니다.
-      </p>` : ''}` : '<div class="empty">조회 조건에 맞는 매도 기록이 없습니다</div>'}
-      <p class="hint">배당·분할·병합 반영 기준(매도일 100 대비). 종목명을 누르면 그 종목의 개입만 모아 봅니다.
+      </p>` : ''}` : `<div class="empty">${sellRows.length ? '시세가 없어 순위를 매길 수 있는 매도 기록이 없습니다' : '조회 조건에 맞는 매도 기록이 없습니다'}</div>`}
+      <p class="hint">${digestNote}배당·분할·병합 반영 기준(매도일 100 대비). 종목명을 누르면 그 종목의 개입만 모아 봅니다.
       "정지"는 거래정지·상장폐지로 시세가 그 날짜에 멈췄다는 뜻이라, 그 종목의 "현재까지"는 사실 그날까지입니다.</p>
     </div>
     <div class="card">
       <h3>물타기 채점 — 평단 아래 추가 매수, 그 돈의 성적${scopeNote}</h3>
-      ${adRows.length ? `
+      ${adBody ? `
       <div class="tbl-wrap"><table class="tbl">
         <tr><th>추가 매수</th><th class="num">이후 종목</th><th class="num">같은 기간 지수</th><th class="num">지수 대비</th></tr>
         ${adBody}
       </table></div>
       ${avgDelta != null ? `<p class="small" style="margin-bottom:0;">
         물타기 ${adRows.length}회. 그 돈을 그냥 지수에 넣었을 때와 비교해 평균 <b class="${pctClass(avgDelta)}">${fmtPct(avgDelta)}P</b>.
-      </p>` : ''}` : '<div class="empty">조회 조건에 맞는 물타기 매수가 없습니다</div>'}
-      <p class="hint">물타기 = 이미 보유 중인 종목을 평균 단가보다 싸게 추가 매수한 것. 한국 종목은 코스피, 미국 종목은 S&P500과 비교합니다.</p>
+      </p>` : ''}` : `<div class="empty">${adRows.length ? '시세가 없어 순위를 매길 수 있는 물타기 매수가 없습니다' : '조회 조건에 맞는 물타기 매수가 없습니다'}</div>`}
+      <p class="hint">${digestNote}물타기 = 이미 보유 중인 종목을 평균 단가보다 싸게 추가 매수한 것. 한국 종목은 코스피, 미국 종목은 S&P500과 비교합니다.</p>
+    </div>
+    <div class="btn-row" style="justify-content:center; margin:2px 0 0;">
+      <button class="btn" data-showall>${actionsShowAll ? '간추려 보기' : `전체 기록 보기 (매도 ${sellRows.length} · 물타기 ${adRows.length}건)`}</button>
     </div>`;
 }
 vActions.bind_ = (root) => {
@@ -209,6 +262,9 @@ vActions.bind_ = (root) => {
   root.querySelectorAll('[data-symlink]').forEach(b => b.addEventListener('click', () => {
     actionsFilter.symbol = b.dataset.symlink; render();
   }));
+  root.querySelector('[data-showall]')?.addEventListener('click', () => {
+    actionsShowAll = !actionsShowAll; render();
+  });
 };
 registerView('actions', vActions);
 
