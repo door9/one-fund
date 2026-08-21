@@ -47,23 +47,26 @@ function vWorlds() {
     ],
   });
 
-  return `
-    <div class="view-title">만약</div>
-    <p class="view-desc">같은 돈으로 다르게 했다면. 계좌 잔고는 누구나 보지만, 대안과의 차이는 아무도 보여주지 않습니다.</p>
-    <div class="card">${chart}
-      ${adj.length ? `<div class="notice" style="margin:10px 0 0;">
-        <b>투입 원금이 계단처럼 꺾이는 지점이 있습니다 — 이유는 이렇습니다.</b><br>
+  // 투입 원금이 꺾인 이유 — 길고 대부분은 안 궁금한 내용이라 본문 맨 아래에 접어 둔다.
+  const adjNote = adj.length ? `
+    <details class="acc" style="margin-top:8px;">
+      <summary>투입 원금이 계단처럼 꺾이는 지점이 있습니다 — 이유 보기 (${adj.length}건)</summary>
+      <div class="small" style="margin-top:8px;">
         ${adj.map(a => {
           const out = a.amtKRW < 0;
           return `· <b>${esc(a.date)}</b> 입력하신 현금 잔액이 앱 장부보다 ${out ? '적어' : '많아'},
             <b class="${pctClass(a.amtKRW)}">${fmtMoney(Math.abs(a.amtKRW))}</b>을
             ${out ? '펀드 밖으로 나간 돈(회수)' : '새로 넣은 돈(투입)'}으로 반영했습니다.`;
         }).join('<br>')}
-        <br><span class="small">앱은 매도 대금을 장부에 쌓아 두는데(pool), 실제 잔액이 그보다 적으면
+        <br><br>앱은 매도 대금을 장부에 쌓아 두는데(pool), 실제 잔액이 그보다 적으면
         그 차액은 <b>펀드 밖으로 나간 것</b>으로 봅니다 — 다른 곳에 썼든 인출했든 이 펀드에서는 빠진 돈이니까요.
-        금액은 맞고, 여러 시점에 걸쳐 나간 돈이 <b>현금을 입력한 날 한 번에</b> 반영돼 계단이 가팔라 보일 뿐입니다.</span>
-      </div>` : ''}
-    </div>
+        금액은 맞고, 여러 시점에 걸쳐 나간 돈이 <b>현금을 입력한 날 한 번에</b> 반영돼 계단이 가팔라 보일 뿐입니다.
+      </div>
+    </details>` : '';
+
+  return `
+    <div class="view-title">만약</div>
+    <p class="view-desc">같은 돈으로 다르게 했다면. 계좌 잔고는 누구나 보지만, 대안과의 차이는 아무도 보여주지 않습니다.</p>
     <div class="card">
       <h3>현재 가치 (투입 원금 ${fmtMoney(dep)})</h3>
       <div class="tbl-wrap"><table class="tbl">
@@ -79,7 +82,9 @@ function vWorlds() {
       <p class="hint">투입 원금은 <b>밖에서 새로 끌어온 돈</b>만 셉니다 — 판 돈으로 다시 산 것은 새 투입이 아니므로, 매매를 많이 했다고 원금이 불어나지 않습니다.
       모든 세계가 같은 날 같은 금액을 굴리므로 비교는 공정합니다. 가정: 배당 재투자 · 달러는 당일 환율 환산 · 예금은 연 ${w.rate}% 복리(세전).</p>
     </div>
-    <p class="small muted" style="margin:0 2px;">매도·물타기 하나하나의 채점은 <a href="#/actions">회상</a>에서.</p>`;
+    <div class="card">${chart}</div>
+    <p class="small muted" style="margin:0 2px;">매도·물타기 하나하나의 채점은 <a href="#/actions">회상</a>에서.</p>
+    ${adjNote}`;
 }
 vWorlds.bind_ = (root) => bindCharts(root);
 registerView('worlds', vWorlds);
