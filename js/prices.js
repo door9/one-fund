@@ -69,21 +69,44 @@ function idbPut(db, entries) {
   });
 }
 
+// 캐시를 일부만 읽은 상태인가 (홈 먼저 그리기용)
+let partial = false;
+export const isPartial = () => partial;
+
+function idbGet(db, keys) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const st = tx.objectStore(STORE);
+    const out = [];
+    for (const k of keys) {
+      const q = st.get(k);
+      q.onsuccess = () => { if (q.result !== undefined) out.push([k, q.result]); };
+    }
+    tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error);
+  });
+}
+
 // 캐시만으로 채운다(네트워크 없음). 쓸 만한 게 있으면 true.
 // 저장소가 바뀌었으면(다른 ghRepo) 캐시를 믿지 않는다.
-export async function loadCached(cfg = null) {
+//
+// only: 그 종목들만 읽는다. 홈은 보유 종목과 환율만 있으면 그려지는데 96개를 다 읽느라
+// 기다렸다(실측 156ms, 폰은 몇 배). 먼저 필요한 것만 읽어 화면을 띄우고 나머지는 뒤에서 채운다.
+// 이때 map은 '아직 덜 찬' 상태이므로 isPartial()이 true — 홈 말고 다른 화면을 그리면 안 된다.
+export async function loadCached(cfg = null, { only = null } = {}) {
   try {
     const db = await openDB();
-    const rows = await idbAll(db);
-    const m = rows.find(r => r[0] === META_KEY)?.[1];
+    const m = (await idbGet(db, [META_KEY]))[0]?.[1];
     if (!m || !m.meta) return false;
     if (cfg && cfg.ghRepo && m.repo && m.repo !== cfg.ghRepo) return false;
+    const rows = only ? await idbGet(db, only) : await idbAll(db);
     for (const [k, v] of rows) if (k !== META_KEY && v?.d) ingest(k, v.d);
     if (!map.size) return false;
     meta = m.meta; source = m.source || 'cache';
+    partial = !!only;
     return true;
   } catch { return false; }   // IndexedDB를 못 쓰는 환경이면 그냥 네트워크로 간다
 }
+
 
 // 캐시에 든 종목별 지문
 async function cachedHashes(cfg) {
@@ -125,7 +148,7 @@ export async function load(cfg = null) {
       } catch { /* 개별 실패 무시 — 캐시에 있던 건 그대로 남는다 */ }
     }));
     if (!map.size) return null;
-    source = src;
+    source = src; partial = false;
     // 목록에서 빠진 종목은 캐시에서도 지운다
     const live = new Set(meta.symbols || []);
     for (const sym of Object.keys(have)) if (!live.has(sym)) { map.delete(sym); put.push([sym, undefined]); }

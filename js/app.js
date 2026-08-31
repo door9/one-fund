@@ -31,15 +31,22 @@ async function init() {
   // 시세는 기기 캐시로 먼저 그린다. 저장소 확인은 화면을 띄운 뒤 뒤에서 한다 —
   // 어제와 같은 시세를 다시 받느라 앱이 열리기를 기다릴 이유가 없다.
   // 캐시가 없는 첫 실행에서만 받을 때까지 기다린다(빈 화면을 보여주는 것보다 낫다).
-  const cached = await P.loadCached(state.settings);
+  // 첫 화면이 홈이면 보유 종목·환율만 먼저 읽어 띄운다. 홈은 그것만 있으면 그려지는데
+  // 96개를 다 읽느라 기다렸다(실측 156ms). 나머지는 화면이 뜬 뒤 뒤에서 채운다.
+  const homeFirst = !location.hash || location.hash === '#/' || location.hash === '#/home';
+  let cached = homeFirst && await P.loadCached(state.settings, { only: homePriceKeys() });
+  if (!cached) cached = await P.loadCached(state.settings);
   if (!cached) await P.load(state.settings);
-  afterPrices();
+  if (!P.isPartial()) afterPrices();
   initTopbar();
   render();
   window.addEventListener('hashchange', render);
   if (cached) {
+    // 남은 종목을 마저 읽고(부분 로드였다면) → 저장소 확인.
     // 지문이 같으면 meta.json 한 번으로 끝난다(종목 파일은 아예 요청하지 않는다).
-    P.load(state.settings).then(() => {
+    const rest = P.isPartial() ? P.loadCached(state.settings).then(() => { afterPrices(); renderIfIdle(); })
+                               : Promise.resolve();
+    rest.then(() => P.load(state.settings)).then(() => {
       afterPrices();
       renderIfIdle();   // 그 사이 사용자가 뭔가 쓰고 있으면 화면을 갈아엎지 않는다
       selfHeal();
@@ -75,6 +82,16 @@ function selfHeal() {
       }
     }
   } catch { /* 자가 치유는 실패해도 조용히 — 다음 크론이 어차피 받는다 */ }
+}
+
+// 홈을 그리는 데 꼭 필요한 시세 — 지금 보유 중인 종목과 환율뿐이다.
+// (평가액·수익률은 보유분만, 넣은 돈/뺀 돈은 환율만 쓴다.)
+function homePriceKeys() {
+  const net = new Map();
+  for (const t of state.trades) net.set(t.symbol, (net.get(t.symbol) || 0) + (t.side === 'buy' ? t.qty : -t.qty));
+  const keys = ['KRW=X'];
+  for (const [sym, q] of net) if (Math.abs(q) > 1e-9) keys.push(sym);
+  return keys;
 }
 
 // 시세를 새로 받은 뒤 늘 함께 해야 하는 것들 (첫 로드·백그라운드 갱신 공용)
