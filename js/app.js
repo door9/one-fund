@@ -25,26 +25,40 @@ async function init() {
     onApplied: () => { renderIfIdle(); },
   });
 
-  // 원격 데이터 먼저 병합(연결돼 있으면) → 시세 로드 → 렌더
+  // 원격 데이터 먼저 병합(연결돼 있으면) → 시세 → 렌더
   if (Dbx.connected()) await Sync.syncNow();
-  await P.load(state.settings);
-  syncNames();
-  // 시세가 생긴 심볼은 미등록 목록에서 자동 제거
-  const pending = state.pendingSymbols.filter(s => !P.has(s));
-  if (pending.length !== state.pendingSymbols.length) {
-    state.pendingSymbols = pending;
-    Store.save(state);
-  }
-  refreshPriceStatus();
+
+  // 시세는 기기 캐시로 먼저 그린다. 저장소 확인은 화면을 띄운 뒤 뒤에서 한다 —
+  // 어제와 같은 시세를 다시 받느라 앱이 열리기를 기다릴 이유가 없다.
+  // 캐시가 없는 첫 실행에서만 받을 때까지 기다린다(빈 화면을 보여주는 것보다 낫다).
+  const cached = await P.loadCached(state.settings);
+  if (!cached) await P.load(state.settings);
+  afterPrices();
   initTopbar();
   render();
   window.addEventListener('hashchange', render);
+  if (cached) {
+    // 지문이 같으면 meta.json 한 번으로 끝난다(종목 파일은 아예 요청하지 않는다).
+    P.load(state.settings).then(() => {
+      afterPrices();
+      renderIfIdle();   // 그 사이 사용자가 뭔가 쓰고 있으면 화면을 갈아엎지 않는다
+      selfHeal();
+    }).catch(() => { /* 저장소가 안 되면 캐시로 계속 쓴다 */ });
+  } else {
+    selfHeal();
+  }
   if (justConnected) toast('Dropbox에 연결됐습니다. 이제 기기 간 동기화됩니다.');
 
-  // 시세는 저장소 크론이 각 시장 마감 직후 미리 받아 둔다 — 앱은 읽기만 한다.
-  // 다만 GitHub 예약은 정시 보장이 없어 밀리는 날이 있다(실측 최대 3시간). 그런 날 앱을 열면
-  // '오늘 종가가 나와 있어야 하는데 없다'를 감지해 서버 갱신을 한 번 요청해 둔다.
-  // 기기·시장·날짜당 1회만(localStorage). 휴장일 오탐은 서버가 몇 초 만에 걸러내므로 무해.
+}
+
+// 시세는 저장소 크론이 각 시장 마감 직후 미리 받아 둔다 — 앱은 읽기만 한다.
+// 다만 GitHub 예약은 정시 보장이 없어 밀리는 날이 있다(실측 최대 3시간). 그런 날 앱을 열면
+// '오늘 종가가 나와 있어야 하는데 없다'를 감지해 서버 갱신을 한 번 요청해 둔다.
+// 기기·시장·날짜당 1회만(localStorage). 휴장일 오탐은 서버가 몇 초 만에 걸러내므로 무해.
+//
+// 반드시 저장소를 확인한 뒤에 부를 것 — 기기 캐시의 옛 meta.lastClose로 판단하면
+// 저장소엔 이미 오늘 종가가 있는데도 워크플로를 헛돌린다.
+function selfHeal() {
   try {
     const stale = P.staleClosedMarkets();
     if (stale.length && state.settings.ghPat && state.settings.ghRepo) {
@@ -61,6 +75,18 @@ async function init() {
       }
     }
   } catch { /* 자가 치유는 실패해도 조용히 — 다음 크론이 어차피 받는다 */ }
+}
+
+// 시세를 새로 받은 뒤 늘 함께 해야 하는 것들 (첫 로드·백그라운드 갱신 공용)
+function afterPrices() {
+  syncNames();
+  // 시세가 생긴 심볼은 미등록 목록에서 자동 제거
+  const pending = state.pendingSymbols.filter(s => !P.has(s));
+  if (pending.length !== state.pendingSymbols.length) {
+    state.pendingSymbols = pending;
+    Store.save(state);
+  }
+  refreshPriceStatus();
 }
 
 // 저장된 데이터의 종목명을 시세의 자동 이름(한국=한글/미국=영문)으로 맞춘다.

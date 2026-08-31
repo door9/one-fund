@@ -34,31 +34,118 @@ function ingest(sym, d) {
   map.set(sym, d);
 }
 
+// ---- 기기 캐시 (IndexedDB) ----
+// 시세는 하루 한 번 마감 뒤에만 바뀌는데, 앱은 열 때마다 종목 파일을 하나씩 전부 다시
+// 받고 있었다(지금 104개 = 요청 105번). 내용이 같아도 "바뀌었냐"를 묻는 왕복은 그대로 들고,
+// 브라우저는 한 서버에 6개까지만 동시에 붙으므로 18번에 나눠 줄을 섰다. 그게 여는 동안의 기다림이었다.
+// 그래서 받은 걸 기기에 두고, 다음부터는 meta.json 하나만 받아 **지문이 다른 종목만** 받는다.
+// 5MB가 넘어 localStorage에는 안 들어간다 → IndexedDB.
+const DB_NAME = 'proj210-prices', STORE = 'files', META_KEY = '__meta';
+
+function openDB() {
+  return new Promise((res, rej) => {
+    const q = indexedDB.open(DB_NAME, 1);
+    q.onupgradeneeded = () => { if (!q.result.objectStoreNames.contains(STORE)) q.result.createObjectStore(STORE); };
+    q.onsuccess = () => res(q.result);
+    q.onerror = () => rej(q.error);
+  });
+}
+
+function idbAll(db) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readonly').objectStore(STORE);
+    const ks = tx.getAllKeys(), vs = tx.getAll();
+    tx.transaction.oncomplete = () => res(ks.result.map((k, i) => [k, vs.result[i]]));
+    tx.transaction.onerror = () => rej(tx.transaction.error);
+  });
+}
+
+function idbPut(db, entries) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const st = tx.objectStore(STORE);
+    for (const [k, v] of entries) v === undefined ? st.delete(k) : st.put(v, k);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+
+// 캐시만으로 채운다(네트워크 없음). 쓸 만한 게 있으면 true.
+// 저장소가 바뀌었으면(다른 ghRepo) 캐시를 믿지 않는다.
+export async function loadCached(cfg = null) {
+  try {
+    const db = await openDB();
+    const rows = await idbAll(db);
+    const m = rows.find(r => r[0] === META_KEY)?.[1];
+    if (!m || !m.meta) return false;
+    if (cfg && cfg.ghRepo && m.repo && m.repo !== cfg.ghRepo) return false;
+    for (const [k, v] of rows) if (k !== META_KEY && v?.d) ingest(k, v.d);
+    if (!map.size) return false;
+    meta = m.meta; source = m.source || 'cache';
+    return true;
+  } catch { return false; }   // IndexedDB를 못 쓰는 환경이면 그냥 네트워크로 간다
+}
+
+// 캐시에 든 종목별 지문
+async function cachedHashes(cfg) {
+  try {
+    const db = await openDB();
+    const rows = await idbAll(db);
+    const m = rows.find(r => r[0] === META_KEY)?.[1];
+    if (cfg && cfg.ghRepo && m?.repo && m.repo !== cfg.ghRepo) return {};
+    const out = {};
+    for (const [k, v] of rows) if (k !== META_KEY && v?.h) out[k] = v.h;
+    return out;
+  } catch { return {}; }
+}
+
+async function saveCache(entries, m, src, repo) {
+  try {
+    const db = await openDB();
+    await idbPut(db, [...entries, [META_KEY, { meta: m, source: src, repo }]]);
+  } catch { /* 저장 실패는 무해 — 다음 번에 다시 받을 뿐 */ }
+}
+
+// 저장소를 확인해 최신으로 맞춘다. meta.json 한 번 + 지문이 달라진 종목만 받는다.
+// 캐시에 이미 있는 종목은 아예 요청하지 않는다.
 export async function load(cfg = null) {
+  const have = await cachedHashes(cfg);
+  const fetchChanged = async (getMeta, getFile, src, repo) => {
+    meta = await getMeta();
+    const hashes = meta.hashes || null;
+    const put = [];
+    await Promise.all((meta.symbols || []).map(async sym => {
+      const h = hashes ? hashes[sym] : null;
+      // 지문이 같고 이미 들고 있으면 건드리지 않는다 (요청도, 저장도 안 한다)
+      if (h && have[sym] === h && map.has(sym)) return;
+      try {
+        const f = meta.files?.[sym] || safeName(sym) + '.json';
+        const d = await getFile(f);
+        ingest(sym, d);
+        put.push([sym, { h: h || null, d }]);
+      } catch { /* 개별 실패 무시 — 캐시에 있던 건 그대로 남는다 */ }
+    }));
+    if (!map.size) return null;
+    source = src;
+    // 목록에서 빠진 종목은 캐시에서도 지운다
+    const live = new Set(meta.symbols || []);
+    for (const sym of Object.keys(have)) if (!live.has(sym)) { map.delete(sym); put.push([sym, undefined]); }
+    await saveCache(put, meta, src, repo);
+    return source;
+  };
+
   // 1) 비공개 저장소
   if (ghReady(cfg)) {
     try {
-      meta = await ghGet(cfg, 'data/meta.json');
-      await Promise.all((meta.symbols || []).map(async sym => {
-        try {
-          const f = meta.files?.[sym] || safeName(sym) + '.json';
-          ingest(sym, await ghGet(cfg, 'data/prices/' + f));
-        } catch { /* 개별 실패 무시 */ }
-      }));
-      if (map.size) { source = 'github'; return source; }
+      const r = await fetchChanged(() => ghGet(cfg, 'data/meta.json'),
+                                   f => ghGet(cfg, 'data/prices/' + f), 'github', cfg.ghRepo);
+      if (r) return r;
     } catch { /* 로컬로 폴백 */ }
   }
   // 2) 로컬 data/
   try {
-    meta = await (await fetch('data/meta.json', { cache: 'no-cache' })).json();
-    await Promise.all((meta.symbols || []).map(async sym => {
-      try {
-        const f = meta.files?.[sym] || safeName(sym) + '.json';
-        const d = await (await fetch('data/prices/' + f, { cache: 'no-cache' })).json();
-        ingest(sym, d);
-      } catch { /* 개별 실패 무시 */ }
-    }));
-    if (map.size) { source = 'local'; return source; }
+    const r = await fetchChanged(() => fetch('data/meta.json', { cache: 'no-cache' }).then(x => x.json()),
+                                 f => fetch('data/prices/' + f, { cache: 'no-cache' }).then(x => x.json()), 'local', null);
+    if (r) return r;
   } catch { meta = null; }
   return null;
 }
