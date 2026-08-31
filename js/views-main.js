@@ -77,8 +77,6 @@ function vHome() {
   }
 
   const pf = E.portfolio(state);
-  const w = E.worlds(state, null, { endOnly: true });   // 홈은 마지막 값 네 개만 쓴다 — 곡선은 '만약' 탭에서
-  const li = w ? w.dates.length - 1 : -1;
   const ln = E.loanStatus(state);
 
   const alerts = [];
@@ -165,13 +163,6 @@ function vHome() {
         <span style="margin-left:auto; color:var(--sub);">›</span>
       </div>
     </a>` : ''}
-    ${w ? `<div class="kpis">
-      <div class="kpi"><div class="k">코스피만 샀다면</div><div class="v">${fmtMoney(w.kospi[li])}</div><div class="s ${pctClass(w.kospi[li] - w.actual[li])}">${fmtSigned(w.kospi[li] - w.actual[li])}</div></div>
-      <div class="kpi"><div class="k">S&P500만 샀다면</div><div class="v">${fmtMoney(w.sp500[li])}</div><div class="s ${pctClass(w.sp500[li] - w.actual[li])}">${fmtSigned(w.sp500[li] - w.actual[li])}</div></div>
-      <div class="kpi"><div class="k">코카콜라만 샀다면</div><div class="v">${fmtMoney(w.coke[li])}</div><div class="s ${pctClass(w.coke[li] - w.actual[li])}">${fmtSigned(w.coke[li] - w.actual[li])}</div></div>
-      <div class="kpi"><div class="k">예금만 했다면 (연 ${w.rate}%)</div><div class="v">${fmtMoney(w.bank[li])}</div><div class="s ${pctClass(w.bank[li] - w.actual[li])}">${fmtSigned(w.bank[li] - w.actual[li])}</div></div>
-    </div>
-    <p class="small muted" style="margin:6px 2px 14px;">자세한 곡선은 <a href="#/worlds">만약</a>에서.</p>` : ''}
     <div class="card">
       <h3>보유 종목</h3>
       <div class="tbl-wrap"><table class="tbl">
