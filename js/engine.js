@@ -535,22 +535,31 @@ export function portfolio(state, date = null) {
 
 // ---- 평행우주 ---------------------------------------------------------------
 // upto: 그날까지만 계산 (펀드 청산 요약이 청산일 시점 값을 얼릴 때 쓴다). 없으면 오늘까지.
-export function worlds(state, upto = null) {
+// endOnly: 마지막 한 점만 계산한다. 홈은 "코스피만 샀다면" 숫자 네 개만 쓰는데
+// 곡선 전체(약 250지점 × 전 매매 재생)를 그리느라 화면이 늦게 떴다(실측 353ms → 2ms).
+// 곡선이 필요한 건 '만약' 탭뿐이므로 그때만 격자를 만든다. 각 지점은 서로 독립적으로
+// 계산되므로(그 날짜 기준 재생) 끝점만 뽑아도 값은 같다.
+export function worlds(state, upto = null, { endOnly = false } = {}) {
   const end = upto || todayStr();
   const trades = sortedTrades(state).filter(t => t.date <= end);
   const buys = trades.filter(t => t.side === 'buy');
   if (!buys.length) return null;
   const start = buys[0].date;
 
-  // 날짜 그리드: 시작~오늘, 약 200~300개 지점 + 거래일
-  const span = Math.max(1, daysBetween(start, end));
-  const step = Math.max(2, Math.round(span / 220));
-  const set = new Set([start, end]);
-  for (let i = step; i < span; i += step) set.add(addDaysStr(start, i));
-  for (const t of trades) set.add(t.date);
-  // 현금 입력일도 격자에 넣는다 — 그날 자본이 한 번에 조정되므로 계단이 정확한 날짜에 찍히게.
-  for (const e of cashLog(state)) if (e.date >= start && e.date <= end) set.add(e.date);
-  const dates = [...set].sort();
+  let dates;
+  if (endOnly) {
+    dates = [end];
+  } else {
+    // 날짜 그리드: 시작~오늘, 약 200~300개 지점 + 거래일
+    const span = Math.max(1, daysBetween(start, end));
+    const step = Math.max(2, Math.round(span / 220));
+    const set = new Set([start, end]);
+    for (let i = step; i < span; i += step) set.add(addDaysStr(start, i));
+    for (const t of trades) set.add(t.date);
+    // 현금 입력일도 격자에 넣는다 — 그날 자본이 한 번에 조정되므로 계단이 정확한 날짜에 찍히게.
+    for (const e of cashLog(state)) if (e.date >= start && e.date <= end) set.add(e.date);
+    dates = [...set].sort();
+  }
 
   // 모든 세계는 "밖에서 새로 들여온 돈"만 굴린다 — 실제의 나와 조건을 맞춰야 비교가 공정하다.
   // 홈의 투입 원금과 같은 원장을 쓰므로 두 화면의 기준이 어긋나지 않는다.
@@ -572,8 +581,9 @@ export function worlds(state, upto = null) {
   }
 
   // 현금 입력이 장부와 달라 자본이 한 번에 조정된 지점 — 그래프에서 절벽처럼 보이므로 설명용으로 넘긴다.
+  // (곡선을 안 그리는 endOnly에서는 쓰이지 않으므로 만들지 않는다.)
   const cashAdj = [];
-  {
+  if (!endOnly) {
     const byDate = new Map();
     for (const c of contribs) if (c.src === 'cash') byDate.set(c.date, (byDate.get(c.date) || 0) + c.amtKRW);
     for (const [date, amtKRW] of byDate) if (Math.abs(amtKRW) >= 1) cashAdj.push({ date, amtKRW });

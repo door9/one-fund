@@ -77,7 +77,7 @@ function vHome() {
   }
 
   const pf = E.portfolio(state);
-  const w = E.worlds(state);
+  const w = E.worlds(state, null, { endOnly: true });   // 홈은 마지막 값 네 개만 쓴다 — 곡선은 '만약' 탭에서
   const li = w ? w.dates.length - 1 : -1;
   const ln = E.loanStatus(state);
 
