@@ -234,17 +234,21 @@ export async function triggerRefresh(opts = {}) {
   setRefreshingUI(true);
   // 한 시장만 받으면 50초 안팎, 전 종목이면 1분 반 안팎 (실측)
   toast(quiet ? '오늘 종가를 받아오는 중 — 완료되면 자동 반영됩니다'
-              : `시세 갱신을 요청했습니다 — ${market === 'all' ? '1~2분' : '1분 안팎'} 걸립니다`, 4200);
+              : '시세 갱신을 요청했습니다 — 20초 안팎 걸립니다', 4200);
 
   const before = P.updatedAt()?.getTime() || 0;
   const done = (msg, ms) => { refreshing = false; setRefreshingUI(false); toast(msg, ms); };
 
   try {
     await P.forceRefresh(state.settings, market);
-    // 워크플로는 받는 종목 수에 따라 다르다 — 실측으로 한국만 27종목 47초, 전 종목 82초.
-    // 전엔 40초 뒤 한 번만
-    // 다시 읽어서, 아직 안 끝난 옛 데이터를 보고 "갱신했습니다"라고 말했다 — 눌러도 그대로인
-    // 것처럼 보인 진짜 원인. 이제 끝날 때까지 주기적으로 확인하고, 실제로 바뀌었을 때만 알린다.
+    // 옛날엔 40초 뒤 한 번만 다시 읽어서, 아직 안 끝난 옛 데이터를 보고 "갱신했습니다"라고
+    // 말했다 — 눌러도 그대로인 것처럼 보인 진짜 원인. 끝날 때까지 확인하고 실제로 바뀌었을
+    // 때만 알린다.
+    //
+    // 수집을 병렬로 바꾼 뒤 서버가 한국 6초·미국 9초·전체 11초에 끝난다(러너 뜨는 시간
+    // 10초 안팎이 더 붙는다). 그런데 첫 확인이 20초, 그 뒤 15초 간격이라 이미 끝난 걸
+    // 한참 뒤에 알아채고 있었다 → 12초부터 5초 간격으로 본다.
+    // meta.json 한 번 받는 게 전부라(지문이 같으면 종목 파일은 요청조차 안 한다) 자주 봐도 싸다.
     const deadline = Date.now() + 240000;   // 최대 4분
     const poll = async () => {
       await P.load(state.settings);
@@ -254,7 +258,7 @@ export async function triggerRefresh(opts = {}) {
         done(quiet ? '오늘 종가가 반영됐습니다' : '시세를 갱신했습니다');
         return;
       }
-      if (Date.now() < deadline) { setTimeout(poll, 15000); return; }
+      if (Date.now() < deadline) { setTimeout(poll, 5000); return; }
       refreshPriceStatus();
       renderIfIdle();
       // quiet(자가 치유)는 사용자가 부른 게 아니다 — 휴장일이면 서버가 몇 초 만에 건너뛰어
@@ -262,7 +266,7 @@ export async function triggerRefresh(opts = {}) {
       if (quiet) { refreshing = false; setRefreshingUI(false); return; }
       done('아직 반영되지 않았습니다 — 잠시 뒤 앱을 다시 열어 확인하세요', 4200);
     };
-    setTimeout(poll, 20000);
+    setTimeout(poll, 12000);
   } catch (e) {
     done('갱신 실패: ' + (e && e.message || e), 4200);
   }
